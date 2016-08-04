@@ -17,7 +17,7 @@ class Android {
 
 	const HEART_INTERVAL = 8 * 60;
 
-	const SEQ = '';
+	const SEQ = 1000;
 	const APPID = '20029f54'; // num2Hexstr(537042772, 4);
 	const EXT_BIN = '';
 	const MSGCOOKIES = 'f9838d80'; // trim('F9 83 8D 80')
@@ -44,10 +44,12 @@ class Android {
 	protected $pwdMd5;
 	protected $uin;
 	protected $server_time;
+	protected $ip;
 	protected $alive = false;
 	protected $verify = false;
 	protected $verifyToken1 = null;
 	protected $verifyToken2 = null;
+	protected $verifyPicHexstr = null;
 	protected $vcode = '';
 
 	protected $keys = [
@@ -95,18 +97,18 @@ class Android {
 		$this->keys['pwd'] = Coder::hashQqPasswordHexstr($this->number, $this->password);
 		$this->keys['tgt'] = Coder::genBytesHexstr(16);
 		$this->keys['session'] = '';
-		var_dump('uin:'.$this->uin);
-		var_dump('pwdMd5:'.$this->pwdMd5);
-		var_dump('randomKey:'.$this->keys['random']);
-		var_dump('pubKey:'.$this->keys['pub']);
-		var_dump('shareKey:'.$this->keys['share']);
-		var_dump('pwdKey:'. $this->keys['pwd']);
-		var_dump('tgtKey:'.$this->keys['tgt']);
+		// var_dump('uin:'.$this->uin);
+		// var_dump('pwdMd5:'.$this->pwdMd5);
+		// var_dump('randomKey:'.$this->keys['random']);
+		// var_dump('pubKey:'.$this->keys['pub']);
+		// var_dump('shareKey:'.$this->keys['share']);
+		// var_dump('pwdKey:'. $this->keys['pwd']);
+		// var_dump('tgtKey:'.$this->keys['tgt']);
 
 	}
 
 	public function login($verifyCode = null) {
-		echo "login\n";
+		// echo "login\n";
 		# 包头
 		$packet = Coder::trim('00 00 00 08 02 00 00 00 04 00').Coder::num2Hexstr(strlen($this->qqHexstr)/2+4, 4).$this->qqHexstr;
 		# tea包体
@@ -121,7 +123,7 @@ class Android {
         # 接收
         $ret = $this->client->recv(10240);
         
-        echo "接收字节数:".strlen($ret);
+        echo "接收字节数:".strlen($ret)."\n";
         $pack = new HexPacket(Coder::str2Hexstr($ret));
         #返回包头
         $pack->shr(4);
@@ -154,6 +156,7 @@ class Android {
 		$msgHeader = Coder::num2Hexstr(strlen($msgHeader)/2+4, 4) . $msgHeader;
         #Message
         $msg = Coder::trim('1F 41 08 10 00 01').$this->uin.Coder::trim('03 07 00 00 00 00 02 00 00 00 00 00 00 00 00 01 01').$this->keys['random'].Coder::trim('01 02').Coder::num2Hexstr(strlen($this->keys['pub'])/2, 2).$this->keys['pub'];
+
         #TEA加密的TLV
         $msg .= $this->packSendLoginTlv($verifyCode).Coder::trim('03');
 		
@@ -174,6 +177,7 @@ class Android {
 			$tlv .= Tlv::tlv18($this->uin);
             $tlv .= Tlv::tlv1($this->uin, $this->server_time);
             $tlv .= Tlv::tlv106($this->uin, $this->server_time, $this->pwdMd5, $this->keys['tgt'], self::IMEI, self::APPID, $this->keys['pwd']);
+
             $tlv .= Tlv::tlv116();
             $tlv .= Tlv::tlv100();
             $tlv .= Tlv::tlv107();
@@ -202,6 +206,144 @@ class Android {
             $tlv .= Tlv::tlv116();
             return Tea::enteaHexstr($tlv, $this->keys['share']);
 		}
+	}
+
+	public function unpackRecvLoginMessage($data)
+	{
+		$data = Tea::deteaHexstr($data, $this->keys['default']);
+		$pack = new HexPacket($data);
+		$head = $pack->shr(Coder::hexstr2Num($pack->shr(4)) - 4);
+		$body = $pack->remain(1);
+		$pack = new HexPacket($head);
+        #head
+        $pack->shr(4); // seq
+        $pack->shr(4);
+        $pack->shr(Coder::hexstr2Num($pack->shr(4)) - 4);
+        $pack->shr(Coder::hexstr2Num($pack->shr(4)) - 4); // cmd
+        $pack->shr(Coder::hexstr2Num($pack->shr(4)) - 4);
+        #body
+        $pack = new HexPacket($body);
+        $pack->shr(4 + 1 + 2 + 10 + 2);
+        $retCode = Coder::hexstr2Num($pack->shr(1));
+        switch($retCode) {
+        	case 0: // 登陆成功
+        		$this->alive = true;
+        		break;
+        	case 2: // 需要验证码
+        		$this->unpackRecvLoginVerifyMessage($pack->remain());
+        		$this->verify = true;
+        		file_put_contents('verify.jpg', Coder::hexstr2Str($this->verifyPicHexstr));
+        		$token = trim(fgets(STDIN));
+        		$this->login($token);
+        		break;
+        	default:
+        		echo '登陆失败';
+        		$pack = new HexPacket(Tea::deteaHexstr($pack->remain(), $this->keys['share']));
+        		$pack->shr(2 + 1 + 4 + 2);
+        		$pack->shr(4); // type
+        		$title = Coder::hexstr2Str($pack->shr(Coder::$hexstr2Num($pack->shr(2))));
+        		$msg = Coder::hexstr2Str($pack->shr(Coder::hexstr2Num($pack->shr(2))));
+        		echo ":{$title}:{$msg}\n";
+        		break;
+        }
+	}
+
+	public function unpackRecvLoginVerifyMessage($data)
+	{
+		$data = Tea::deteaHexstr($data, $this->keys['share']);
+		$pack = new HexPacket($data);
+		$pack->shr(3);
+		$tlv_num = Coder::hexstr2Num($pack->shr(2));
+		for ($i=0; $i < $tlv_num; $i++) { 
+			$tlv_cmd = $pack->shr(2);
+			$tlv_data = $pack->shr(Coder::hexstr2Num($pack->shr(2)));
+			$this->decodeTlv($tlv_cmd, $tlv_data);
+		}
+	}
+
+	public function decodeTlv($cmd, $data)
+	{
+		switch($cmd):
+			case Coder::trim('01 18'):
+			case Coder::trim('01 63'):
+			case Coder::trim('01 20'):
+			case Coder::trim('01 1A'):
+			case Coder::trim('01 36'):
+			case Coder::trim('01 1F'):
+			case Coder::trim('01 38'):
+			case Coder::trim('01 6a'):
+			case Coder::trim('01 06'):
+			case Coder::trim('01 0c'):
+			case Coder::trim('01 0d'):
+				break;
+			case Coder::trim('01 0a'):
+				$this->keys['token004c'] = $data;
+				break;
+			case Coder::trim('01 14');
+				$pack = new HexPacket($data);
+				$pack->shr(6);
+				$this->keys['token0058'] = $pack->shr(Coder::hexstr2Num($pack->shr(2)));
+				break;
+			case Coder::trim('01 0E');
+				$this->keys['mst1'] = $data;
+				break;
+			case Coder::trim('01 03');
+				$this->keys['stweb'] = $data;
+				break;
+			case Coder::trim('01 20');
+				$this->keys['skey'] = $data;
+				break;
+			case Coder::trim('01 36');
+				$this->keys['vkey'] = $data;
+				break;
+			case Coder::trim('03 05');
+				$this->keys['sessionKey'] = $data;
+				break;
+			case Coder::trim('01 43');
+				$this->keys['token002c'] = $data;
+				break;
+			case Coder::trim('01 64');
+				$this->keys['sid'] = $data;
+				break;
+			case Coder::trim('01 08');
+				$this->keys['ksid'] = $data;
+				break;
+			case Coder::trim('01 6D');
+				$this->keys['superKey'] = $data;
+				break;
+			case Coder::trim('01 6C');
+				$this->keys['psKey'] = $data;
+				break;
+			case Coder::trim('01 04');
+				$this->verifyToken2 = $data;
+				break;
+			case Coder::trim('01 1a');
+				$pack = new HexPacket($data);
+				$pack->shr(2 + 1 + 1);
+				echo "获取昵称:".Coder::hexstr2Str($pack->shr(Coder::hexstr2Num($pack->shr(1))))."\n";
+	            break;
+	        case Coder::trim('01 30');
+	        	$pack = new HexPacket($data);
+	        	$pack->shr(2);
+	        	$this->server_time = $pack->shr(4);
+	        	$this->ip = Coder::hexstr2Ip($pack->shr(4));
+	        	break;
+	        case Coder::trim('01 05');
+	        	$pack = new HexPacket($data);
+	        	$this->verifyToken1 = $pack->shr(Coder::hexstr2Num($pack->shr(2)));
+	        	$this->verifyPicHexstr = $pack->shr(Coder::hexstr2Num($pack->shr(2)));
+	        	break;
+	        case Coder::trim('01 65');
+	        	$pack = new HexPacket($data);
+	        	$pack->shr(4);
+	        	$title = Coder::hexstr2Str($pack->shr(Coder::hexstr2Num($pack->shr(1))));
+	        	$msg = Coder::hexstr2Str($pack->shr(Coder::hexstr2Num($pack->shr(4))));
+	        	echo "verifyReason:{$title}:{$msg}\n" ;
+	        	break;
+	        default:
+	        	echo "未知的tlv:{$cmd}";
+	        	break;
+		endswitch;
 	}
 }
 

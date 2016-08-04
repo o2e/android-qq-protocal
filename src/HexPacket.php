@@ -31,7 +31,7 @@ class HexPacket
 	{
 		$n *= 2;
 		if($n + $this->cur > $this->length)
-			$n = $this->legnth - $this->cur;
+			$n = $this->length - $this->cur;
 		$old = $this->cur;
 		$this->cur += $n;
 		return substr($this->data, $old, $this->cur - $old) ?: '';

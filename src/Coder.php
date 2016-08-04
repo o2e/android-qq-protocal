@@ -23,7 +23,7 @@ class Coder
 	public static function genBytesHexstr($m, $n = 1, $s = '')
 	{
 		return self::numlist2Hexstr(array_map(function() {
-			return mt_rand(0, 255);
+			return 0; // mt_rand(0, 255);
 		}, range(0, $m - 1)), $n, $s);
 	}
 
@@ -70,11 +70,16 @@ class Coder
 		return $res;
 	}
 
-	public static function hexstr2Hexstream($str)
+	public static function hexstr2Hexstream($str, $sep = '')
 	{
-		return join('', array_map(function($v) {
+		return join($sep, array_map(function($v) {
 			return chr(hexdec($v));
 		}, self::hexstr2Hexlist($str)));
+	}
+
+	public static function format($str)
+	{
+		return join(' ', self::hexstr2Hexlist($str));
 	}
 
 	public static function str2Hexstr($str)

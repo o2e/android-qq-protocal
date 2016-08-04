@@ -66,6 +66,7 @@ class Tlv
 		$tlv .= $appId;
 		$tlv .= Coder::trim('00 00 00 01 00 00');
 		$tlv = Tea::enteaHexstr($tlv, $pwdKey);
+		
 		$tlv = self::tlvLen($tlv);
 		return self::headerTlv('01 06', $tlv);
 	}
